@@ -2,11 +2,27 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>3D Mouse Thermal Map</title>
+<meta name="description" content="Interactive 3D lab-mouse thermal map: a synthetic, physiologically-inspired educational model of mouse surface temperature (brown fat, vasomotor tone, heating/cooling pad) — not real sensor data." />
+<meta name="theme-color" content="#0b0d10" />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="3D Mouse Thermal Map" />
+<meta property="og:description" content="Interactive 3D lab-mouse thermal simulator. A synthetic, educational model of surface temperature — not real sensor data." />
+<meta property="og:url" content="https://lea7570.github.io/3d_thermal_mouse/" />
+<meta property="og:image" content="https://lea7570.github.io/3d_thermal_mouse/screenshot.png" />
+<meta property="og:image:width" content="1280" />
+<meta property="og:image:height" content="800" />
+<meta property="og:image:alt" content="A 3D lab mouse rendered in an ironbow thermal colormap, with a warm brown-fat hotspot between the shoulders and cooler ears, paws and tail." />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="3D Mouse Thermal Map" />
+<meta name="twitter:description" content="Interactive 3D lab-mouse thermal simulator. A synthetic, educational model of surface temperature — not real sensor data." />
+<meta name="twitter:image" content="https://lea7570.github.io/3d_thermal_mouse/screenshot.png" />
+<meta name="twitter:image:alt" content="A 3D lab mouse rendered in an ironbow thermal colormap." />
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3CradialGradient id='g'%3E%3Cstop offset='0' stop-color='%23fffff2'/%3E%3Cstop offset='.3' stop-color='%23ffd91a'/%3E%3Cstop offset='.55' stop-color='%23f24010'/%3E%3Cstop offset='.78' stop-color='%23660088'/%3E%3Cstop offset='1' stop-color='%231a004d'/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx='16' cy='16' r='15' fill='url(%23g)'/%3E%3C/svg%3E" />
 <style>
   :root { color-scheme: dark; }
-  html, body { margin: 0; height: 100%; background: #0b0d10; overflow: hidden; font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+  html, body { margin: 0; height: 100%; background: #0b0d10; overflow: hidden; overscroll-behavior: none; font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
   canvas { display: block; touch-action: none; }
 
   #panel {
@@ -14,15 +30,27 @@
     background: rgba(15,17,20,0.82); border: 1px solid rgba(255,255,255,0.08);
     border-radius: 10px; padding: 14px 16px; color: #e8eaed; backdrop-filter: blur(6px);
   }
+  #panelHeader { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   #panel h1 { font-size: 15px; margin: 0 0 6px; font-weight: 600; letter-spacing: 0.2px; }
+  #panelToggle { display: none; padding: 5px 10px; }
   #panel p { font-size: 12px; line-height: 1.5; margin: 0 0 10px; color: #a7adb5; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
   button {
     background: #1c2026; border: 1px solid rgba(255,255,255,0.12); color: #e8eaed;
     padding: 7px 11px; border-radius: 6px; font-size: 12px; cursor: pointer;
+    touch-action: manipulation;
   }
-  button:hover { background: #262b33; }
+  @media (hover: hover) { button:hover { background: #262b33; } }
   button.active { background: #3a6df0; border-color: #3a6df0; }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  /* three-way segmented control (floor pad) */
+  .seg-label { font-size: 12px; color: #cfd3d8; display: block; margin-bottom: 4px; }
+  .seg { display: flex; margin-bottom: 10px; }
+  .seg button { flex: 1; border-radius: 0; margin-left: -1px; }
+  .seg button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+  .seg button:last-child { border-radius: 0 6px 6px 0; }
+  .seg button.active { position: relative; } /* keep the blue border above its neighbours' */
   #stats { font-size: 11px; color: #7f8790; line-height: 1.6; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 8px; }
 
   #legend {
@@ -50,12 +78,72 @@
   #bpBox strong { color: #e8eaed; }
   #bpValue { color: #e8eaed; font-weight: 600; }
   #bpWarning { font-size: 11px; color: #e0a53a; margin-top: 3px; line-height: 1.4; }
+
+  #roiDraw {
+    position: fixed; display: none; pointer-events: none; box-sizing: border-box;
+    border: 2px dashed #fff; border-radius: 50%; background: rgba(255,255,255,0.06);
+  }
+  #roiBox {
+    position: fixed; bottom: 20px; left: 16px; display: none; flex-direction: column; gap: 4px;
+    background: rgba(15,17,20,0.82); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px;
+    padding: 8px 6px 8px 10px; font-size: 12px; color: #cfd3d8; max-width: calc(100% - 160px);
+  }
+  body.has-roi:not(.measuring) #roiBox { display: flex; }
+  body.has-roi:not(.measuring) #hint { display: none; }
+  .roi-row { display: flex; align-items: center; gap: 8px; }
+  .roi-swatch { flex: none; width: 10px; height: 10px; border-radius: 50%; }
+  .roi-name { font-weight: 600; color: #e8eaed; }
+  .roi-vals { font-variant-numeric: tabular-nums; }
+  .roi-del { margin-left: auto; padding: 0 6px; font-size: 15px; line-height: 20px; background: transparent; border: none; color: #7f8790; }
+
+  /* shown instead of a blank page when three.js can't load or WebGL is unavailable */
+  #fatal { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 16px; }
+  body.fatal #fatal { display: flex; }
+  body.fatal #panel, body.fatal #legend, body.fatal #hint { display: none; }
+  #fatal .box {
+    max-width: 440px; background: rgba(15,17,20,0.92); border: 1px solid rgba(224,165,58,0.45);
+    border-radius: 10px; padding: 18px 20px; color: #e8eaed; font-size: 13px; line-height: 1.5;
+  }
+  #fatal h2 { font-size: 16px; margin: 0 0 8px; color: #e0a53a; }
+  #fatal p { margin: 0 0 8px; color: #a7adb5; }
+  #fatal ul { margin: 0; padding-left: 18px; color: #cfd3d8; }
+
+  /* ---------- small screens: collapsible panel, compact overlays ---------- */
+  @media (max-width: 640px), (max-height: 500px) {
+    #panel {
+      top: calc(8px + env(safe-area-inset-top)); left: calc(8px + env(safe-area-inset-left));
+      padding: 10px 12px; max-height: calc(60vh - env(safe-area-inset-top));
+      overflow-y: auto; -webkit-overflow-scrolling: touch;
+    }
+    #panel h1 { margin: 0; }
+    #panelToggle { display: inline-block; }
+    #panelBody { margin-top: 8px; }
+    #panel.collapsed #panelBody { display: none; }
+    button { padding: 9px 12px; font-size: 13px; min-height: 44px; }
+    .seg button { min-height: 44px; }
+    .slider-row input[type="range"] { height: 28px; }
+
+    #legend { bottom: calc(12px + env(safe-area-inset-bottom)); right: calc(8px + env(safe-area-inset-right)); padding: 8px 10px; gap: 8px; }
+    #legendBar { height: 110px; width: 14px; }
+    #legend .labels { height: 110px; }
+
+    #hint { bottom: calc(12px + env(safe-area-inset-bottom)); left: calc(10px + env(safe-area-inset-left)); max-width: calc(100% - 110px); }
+    #roiBox { bottom: calc(12px + env(safe-area-inset-bottom)); left: calc(8px + env(safe-area-inset-left)); max-width: calc(100% - 110px); font-size: 11px; }
+    .roi-del { font-size: 18px; padding: 2px 8px; }
+  }
+  @media (max-width: 640px) {
+    #panel { right: calc(8px + env(safe-area-inset-right)); max-width: none; }
+  }
 </style>
 </head>
 <body>
 
 <div id="panel">
-  <h1>3D Mouse &mdash; Thermal Map</h1>
+  <div id="panelHeader">
+    <h1>3D Mouse &mdash; Thermal Map</h1>
+    <button id="panelToggle" aria-expanded="true" aria-controls="panelBody">Hide</button>
+  </div>
+  <div id="panelBody">
   <p>Procedural mouse model with a synthetic, physiologically-inspired thermal field (not real sensor data). Warmer torso core, an interscapular brown-fat hotspot, and cooler ears / nose / paws / tail.</p>
   <div class="row">
     <button id="btnThermal" class="active">Thermal view</button>
@@ -63,11 +151,16 @@
   </div>
   <div class="row">
     <button id="btnRotate">Auto-rotate: off</button>
-    <button id="btnReset">Reset heat sources</button>
+    <button id="btnReset" disabled>Clear heat pulses</button>
   </div>
   <div class="row">
-    <button id="btnHeatPad">Heating pad: off</button>
-    <button id="btnCoolPad">Cooling pad: off</button>
+    <button id="btnMeasure">Measure region</button>
+  </div>
+  <span class="seg-label" id="padLabel">Floor pad</span>
+  <div class="seg" id="padControl" role="group" aria-labelledby="padLabel">
+    <button data-pad="none" class="active" aria-pressed="true">Off</button>
+    <button data-pad="heating" aria-pressed="false">Heating</button>
+    <button data-pad="cooling" aria-pressed="false">Cooling</button>
   </div>
   <div class="slider-row">
     <label for="roomTemp">Room temp: <span id="roomTempVal">22.0&deg;C</span></label>
@@ -79,8 +172,10 @@
     <div id="bpWarning"></div>
   </div>
   <div id="stats">
-    Core ~37.5&deg;C &middot; BAT hotspot ~38.5&deg;C<br/>
-    Ears/nose/paws ~27&ndash;29&deg;C &middot; Tail tip ~25&deg;C
+    Core ~37.5&deg;C (defended) &middot; BAT hotspot <span id="batVal">&mdash;</span><br/>
+    Brown-fat thermogenesis: <span id="batActivity">&mdash;</span><br/>
+    <span id="periphVals">&mdash;</span>
+  </div>
   </div>
 </div>
 
@@ -90,7 +185,10 @@
 </div>
 
 <div id="tooltip"></div>
-<div id="hint">Drag to rotate &middot; scroll to zoom &middot; click the mouse (thermal view) to add a heat source</div>
+<div id="roiDraw"></div>
+<div id="roiBox" aria-live="polite"></div>
+<div id="hint">Drag to rotate &middot; scroll to zoom &middot; click the mouse (thermal view) to add a heat pulse</div>
+<div id="fatal" role="alert"><div class="box"><h2></h2><p></p><ul></ul></div></div>
 
 <script type="importmap">
 {
@@ -102,9 +200,40 @@
 </script>
 
 <script type="module">
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+/* ---------- fail visibly ----------
+   A failed static import would stop this script before any line runs, leaving
+   a blank page; importing dynamically lets us catch it and say what went wrong. */
+function showFatal(title, detail, tips) {
+  const box = document.querySelector('#fatal .box');
+  box.querySelector('h2').textContent = title;
+  box.querySelector('p').textContent = detail;
+  box.querySelector('ul').replaceChildren(...tips.map(tip => {
+    const li = document.createElement('li');
+    li.textContent = tip;
+    return li;
+  }));
+  document.body.classList.add('fatal');
+}
+
+let THREE, OrbitControls, mergeGeometries;
+try {
+  [THREE, { OrbitControls }, { mergeGeometries }] = await Promise.all([
+    import('three'),
+    import('three/addons/controls/OrbitControls.js'),
+    import('three/addons/utils/BufferGeometryUtils.js'),
+  ]);
+} catch (err) {
+  showFatal(
+    'Couldn’t load the 3D engine',
+    'The three.js library is fetched from cdn.jsdelivr.net and didn’t arrive.',
+    [
+      'Check your internet connection and reload the page.',
+      'Ad-blockers, firewalls or school/corporate networks may block cdn.jsdelivr.net — try allowing it or another network.',
+      'Use an up-to-date Chrome, Edge, Firefox or Safari (import-map support is required).',
+    ]
+  );
+  throw err;
+}
 
 /* ---------- colormap (ironbow-style) ---------- */
 const STOPS = [
@@ -158,7 +287,29 @@ scene.fog = new THREE.Fog(0x0b0d10, 3.5, 9);
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
 camera.position.set(1.9, 1.2, 2.6);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+// Portrait screens have a narrow horizontal FOV, so back the camera (and fog) off
+// until the whole mouse, nose to tail tip, fits across the width.
+const fitScale = Math.min(2.2, Math.max(1, 0.95 / camera.aspect));
+camera.position.multiplyScalar(fitScale);
+scene.fog.near *= fitScale;
+scene.fog.far *= fitScale;
+
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ antialias: true }); // throws if no WebGL context can be created
+  if (!renderer.getContext()) throw new Error('No WebGL context');
+} catch (err) {
+  showFatal(
+    'WebGL isn’t available',
+    'This simulator draws the mouse with WebGL, which your browser didn’t provide.',
+    [
+      'Use a browser with WebGL support (current Chrome, Edge, Firefox or Safari).',
+      'Enable hardware / graphics acceleration in your browser settings, then restart it.',
+      'Update your graphics drivers, or try another device.',
+    ]
+  );
+  throw err;
+}
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -168,7 +319,7 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.minDistance = 1.2;
-controls.maxDistance = 6;
+controls.maxDistance = 6 * fitScale;
 controls.target.set(0, 0.05, 0.1);
 
 scene.add(new THREE.AmbientLight(0xffffff, 1.0));
@@ -195,16 +346,10 @@ const EXTREMITY_T = 29;
 const EYE_T = 35;
 const TAIL_BASE_T = 32, TAIL_TIP_T = 25;
 const BAT_CENTER = new THREE.Vector3(0, 0.22, 0.35); // interscapular brown-fat hotspot
-const BAT_SIGMA = 0.24, BAT_AMPLITUDE = 5.0; // BAT peak = SURFACE_FUR_T + amplitude ≈ 38.5
 const noise = () => (Math.random() - 0.5) * 0.3;
 const FUR_COLOR = [0.55, 0.50, 0.44];
 const SKIN_COLOR = [0.80, 0.58, 0.58];
 const EYE_COLOR = [0.03, 0.03, 0.03];
-
-function gaussianBump(pos, center, sigma, amp) {
-  const d2 = pos.distanceToSquared(center);
-  return amp * Math.exp(-d2 / (2 * sigma * sigma));
-}
 
 /* ---------- geometry helpers ---------- */
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -249,6 +394,19 @@ function vasomotorDelta(roomTemp) {
     return -clamp01((ROOM_THERMONEUTRAL - roomTemp) / 15) * 8;
   }
   return clamp01((roomTemp - ROOM_THERMONEUTRAL) / 6) * 4;
+}
+/* Brown adipose tissue (BAT) is the mouse's furnace for non-shivering
+   thermogenesis: cold drives sympathetic (β3-adrenergic) activation of the
+   interscapular depot, so the hotspot gets hotter and spreads as the room
+   cools, and is nearly quiescent at thermoneutrality. */
+function batActivation(roomTemp) {
+  const cold = clamp01((ROOM_THERMONEUTRAL - roomTemp) / 15);
+  return { amp: 1 + 6 * Math.tanh(cold * 1.5), sigma: 0.18 + 0.08 * cold };
+}
+function batActivityLabel(amp) {
+  if (amp >= 4.5) return 'high';
+  if (amp >= 2.5) return 'moderate';
+  return 'low';
 }
 function roomDescriptor(t) {
   if (t < 18) return 'Cold stress';
@@ -351,8 +509,7 @@ const NOSE_Z = 1.38;
     (p) => {
       let t = SURFACE_FUR_T;
       if (p.y < 0) t += 0.8 * clamp01(-p.y / 0.34);
-      t += gaussianBump(p, BAT_CENTER, BAT_SIGMA, BAT_AMPLITUDE);
-      return t + noise();
+      return t + noise(); // brown-fat heat is added at runtime — it depends on room temp
     },
     (p) => jitterColor(blendColor(FUR_COLOR, BELLY_COLOR, clamp01(-p.y / 0.3)), 0.05),
     'torso',
@@ -498,9 +655,10 @@ for (const { x, z } of LEG_SPECS) {
 const geometries = parts.map(p => p.geometry);
 const merged = mergeGeometries(geometries, false);
 merged.computeVertexNormals();
+const vertexCount = merged.attributes.position.count;
 
-const baseTemp = new Float32Array(merged.attributes.position.count);
-const sensitivity = new Float32Array(merged.attributes.position.count);
+const baseTemp = new Float32Array(vertexCount);
+const sensitivity = new Float32Array(vertexCount);
 const groupIndices = {}; // group -> [[start,end), ...]
 {
   let offset = 0;
@@ -511,10 +669,30 @@ const groupIndices = {}; // group -> [[start,end), ...]
     offset += p.temp.length;
   }
 }
-const currentTemp = Float32Array.from(baseTemp);
 
-function avgGroupTemp(group) {
-  const ranges = groupIndices[group];
+// Squared distance to the brown-fat depot, for torso vertices only; every other
+// part stays at Infinity so it gets no thermogenic contribution.
+const batDist2 = new Float32Array(vertexCount).fill(Infinity);
+const batPeakIdx = []; // vertices right over the depot, for the hotspot readout
+{
+  const pos = merged.attributes.position;
+  const v = new THREE.Vector3();
+  for (const [s, e] of groupIndices.torso) {
+    for (let i = s; i < e; i++) {
+      batDist2[i] = v.fromBufferAttribute(pos, i).distanceToSquared(BAT_CENTER);
+      if (batDist2[i] < 0.15 * 0.15) batPeakIdx.push(i);
+    }
+  }
+}
+
+// Each vertex's index, read back from an offscreen render to find exactly which
+// surface points are visible inside a measurement region.
+merged.setAttribute('vid', new THREE.Float32BufferAttribute(Float32Array.from({ length: vertexCount }, (_, i) => i), 1));
+
+const targetTemp = new Float32Array(vertexCount);  // equilibrium for the current conditions
+const currentTemp = new Float32Array(vertexCount); // what is displayed; eases toward targetTemp
+
+function avgTemp(ranges) {
   if (!ranges) return NaN;
   let sum = 0, count = 0;
   for (const [s, e] of ranges) {
@@ -522,34 +700,52 @@ function avgGroupTemp(group) {
   }
   return count ? sum / count : NaN;
 }
+const avgGroupTemp = group => avgTemp(groupIndices[group]);
 
 const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0.0, side: THREE.DoubleSide });
 const mouseMesh = new THREE.Mesh(merged, material);
 scene.add(mouseMesh);
 
-/* ---------- color sync ---------- */
+/* ---------- equilibrium temperature field ---------- */
 let roomTemp = 22;
 const hotspots = [];
-function computeCurrentTemp() {
+function computeTargetTemp() {
   const pos = merged.attributes.position;
   const vDelta = vasomotorDelta(roomTemp);
-  for (let i = 0; i < pos.count; i++) {
+  const { amp: batAmp, sigma: batSigma } = batActivation(roomTemp);
+  const batInv = 1 / (2 * batSigma * batSigma);
+  for (let i = 0; i < vertexCount; i++) {
     const vx = pos.getX(i), vy = pos.getY(i), vz = pos.getZ(i);
-    let t = baseTemp[i] + sensitivity[i] * vDelta + padEffect(vx, vy, vz);
-    if (hotspots.length) {
-      for (const h of hotspots) {
-        const dx = vx - h.x, dy = vy - h.y, dz = vz - h.z;
-        const d2 = dx * dx + dy * dy + dz * dz;
-        t += h.strength * Math.exp(-d2 / (2 * h.radius * h.radius));
-      }
+    let t = baseTemp[i] + batAmp * Math.exp(-batDist2[i] * batInv)
+      + sensitivity[i] * vDelta + padEffect(vx, vy, vz);
+    for (const h of hotspots) {
+      const dx = vx - h.x, dy = vy - h.y, dz = vz - h.z;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      t += h.strength * Math.exp(-d2 / (2 * h.radius * h.radius));
     }
-    currentTemp[i] = t;
+    targetTemp[i] = t;
   }
-  updateBPEstimate();
 }
+
+/* ---------- thermal inertia ----------
+   Tissue doesn't jump to a new temperature: heat capacity and perfusion make
+   the surface approach its new equilibrium roughly exponentially. Real time
+   constants are minutes; compressed here so the transition is watchable. */
+const THERMAL_TAU = 1.5; // seconds
+function stepTemps(dt) {
+  const k = 1 - Math.exp(-dt / THERMAL_TAU);
+  let maxDiff = 0;
+  for (let i = 0; i < vertexCount; i++) {
+    const d = targetTemp[i] - currentTemp[i];
+    currentTemp[i] += d * k;
+    if (Math.abs(d) > maxDiff) maxDiff = Math.abs(d);
+  }
+  return maxDiff;
+}
+
 function syncColorFromTemp() {
   const colorAttr = merged.attributes.color;
-  for (let i = 0; i < currentTemp.length; i++) {
+  for (let i = 0; i < vertexCount; i++) {
     const [r, g, b] = ironbow((currentTemp[i] - TMIN) / (TMAX - TMIN));
     colorAttr.setXYZ(i, r, g, b);
   }
@@ -563,7 +759,7 @@ function syncColorFromTemp() {
    a bigger core-to-tail thermal gradient (more vasoconstriction) is
    treated as a proxy for higher sympathetic tone / BP, and low
    confidence is flagged exactly when the tail is cold relative to
-   the core. This is a illustrative heuristic, not a validated
+   the core. This is an illustrative heuristic, not a validated
    physiological measurement. */
 const bpValueEl = document.getElementById('bpValue');
 const bpWarningEl = document.getElementById('bpWarning');
@@ -580,20 +776,66 @@ function updateBPEstimate() {
     : '';
 }
 
-computeCurrentTemp();
-syncColorFromTemp();
-
-/* ---------- hotspots ---------- */
-function addHotspot(localPoint) {
-  hotspots.push({ x: localPoint.x, y: localPoint.y, z: localPoint.z, strength: 3.8, radius: 0.19 });
-  if (hotspots.length > 25) hotspots.shift();
-  computeCurrentTemp();
-  if (thermalMode) syncColorFromTemp();
+/* ---------- live stats ---------- */
+const batValEl = document.getElementById('batVal');
+const batActivityEl = document.getElementById('batActivity');
+const periphValsEl = document.getElementById('periphVals');
+function updateStats() {
+  let batPeak = -Infinity;
+  for (const i of batPeakIdx) batPeak = Math.max(batPeak, currentTemp[i]);
+  batValEl.textContent = batPeak.toFixed(1) + '°C';
+  batActivityEl.textContent = batActivityLabel(batActivation(roomTemp).amp);
+  const tailRanges = groupIndices.tail;
+  const fmt = v => v.toFixed(1);
+  periphValsEl.textContent =
+    `Ears ${fmt(avgGroupTemp('ear'))} · Nose ${fmt(avgGroupTemp('nose'))} · ` +
+    `Paws ${fmt(avgGroupTemp('paw'))} · Tail tip ${fmt(avgTemp(tailRanges.slice(-2)))} °C`;
 }
+
+/* ---------- heat pulses: spread + dissipate ----------
+   A tapped heat source deposits a pulse of heat in the skin. It spreads
+   laterally (Gaussian width grows as r² = r0² + 2·D·t, so the peak falls as
+   the same heat covers more area) and is carried off by blood flow and
+   surface loss (exponential decay), fading out after ~45 s. */
+const PULSE_R0 = 0.19, PULSE_STRENGTH = 3.8, PULSE_D = 0.0015, PULSE_LOSS_TAU = 20;
+const nowSeconds = () => performance.now() / 1000;
+const btnReset = document.getElementById('btnReset');
+function updateClearButton() {
+  btnReset.disabled = hotspots.length === 0;
+}
+function addHotspot(localPoint) {
+  hotspots.push({ x: localPoint.x, y: localPoint.y, z: localPoint.z, born: nowSeconds(), strength: PULSE_STRENGTH, radius: PULSE_R0 });
+  if (hotspots.length > 25) hotspots.shift();
+  computeTargetTemp();
+  updateClearButton();
+}
+function ageHotspots(now) {
+  for (let i = hotspots.length - 1; i >= 0; i--) {
+    const h = hotspots[i];
+    const age = now - h.born;
+    const r2 = PULSE_R0 * PULSE_R0 + 2 * PULSE_D * age;
+    h.radius = Math.sqrt(r2);
+    h.strength = PULSE_STRENGTH * (PULSE_R0 * PULSE_R0 / r2) * Math.exp(-age / PULSE_LOSS_TAU);
+    if (h.strength < 0.05) hotspots.splice(i, 1);
+  }
+  updateClearButton();
+}
+// Clearing is a user reset, not physics: strip the pulse heat at once instead of
+// letting it drain through the thermal-inertia easing (which reads as "nothing
+// happened"). Room/pad transitions already in progress keep easing.
 function resetHotspots() {
+  const withPulses = Float32Array.from(targetTemp);
   hotspots.length = 0;
-  computeCurrentTemp();
+  computeTargetTemp();
+  for (let i = 0; i < vertexCount; i++) {
+    const pulseHeat = withPulses[i] - targetTemp[i]; // pulses only ever add heat
+    if (pulseHeat > 0 && currentTemp[i] > targetTemp[i]) {
+      currentTemp[i] = Math.max(targetTemp[i], currentTemp[i] - pulseHeat);
+    }
+  }
   if (thermalMode) syncColorFromTemp();
+  refreshReadouts();
+  updateClearButton();
 }
 
 /* ---------- view toggle ---------- */
@@ -614,21 +856,19 @@ function setThermalMode(on) {
 /* ---------- UI wiring ---------- */
 document.getElementById('btnThermal').addEventListener('click', () => setThermalMode(true));
 document.getElementById('btnVisible').addEventListener('click', () => setThermalMode(false));
-document.getElementById('btnReset').addEventListener('click', resetHotspots);
+btnReset.addEventListener('click', resetHotspots);
 
-const btnHeatPad = document.getElementById('btnHeatPad');
-const btnCoolPad = document.getElementById('btnCoolPad');
+const padButtons = document.querySelectorAll('#padControl button');
 function setFloorState(state) {
-  floorState = floorState === state ? 'none' : state;
-  btnHeatPad.textContent = 'Heating pad: ' + (floorState === 'heating' ? 'on' : 'off');
-  btnHeatPad.classList.toggle('active', floorState === 'heating');
-  btnCoolPad.textContent = 'Cooling pad: ' + (floorState === 'cooling' ? 'on' : 'off');
-  btnCoolPad.classList.toggle('active', floorState === 'cooling');
-  computeCurrentTemp();
-  if (thermalMode) syncColorFromTemp();
+  floorState = state;
+  for (const btn of padButtons) {
+    const on = btn.dataset.pad === state;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', String(on));
+  }
+  computeTargetTemp();
 }
-btnHeatPad.addEventListener('click', () => setFloorState('heating'));
-btnCoolPad.addEventListener('click', () => setFloorState('cooling'));
+for (const btn of padButtons) btn.addEventListener('click', () => setFloorState(btn.dataset.pad));
 
 const roomTempSlider = document.getElementById('roomTemp');
 const roomTempVal = document.getElementById('roomTempVal');
@@ -637,11 +877,13 @@ function setRoomTemp(v) {
   roomTemp = v;
   roomTempVal.textContent = v.toFixed(1) + '°C';
   roomDescEl.textContent = roomDescriptor(v);
-  computeCurrentTemp();
-  if (thermalMode) syncColorFromTemp();
+  computeTargetTemp();
 }
 roomTempSlider.addEventListener('input', (evt) => setRoomTemp(parseFloat(evt.target.value)));
 setRoomTemp(roomTemp);
+// Start at equilibrium rather than easing up from 0°C.
+currentTemp.set(targetTemp);
+syncColorFromTemp();
 
 let autoRotate = false;
 const btnRotate = document.getElementById('btnRotate');
@@ -651,48 +893,287 @@ btnRotate.addEventListener('click', () => {
   btnRotate.classList.toggle('active', autoRotate);
 });
 
-/* ---------- raycasting: hover tooltip + click to add heat ---------- */
+/* ---------- panel collapse (small screens) ---------- */
+const smallScreen = window.matchMedia('(max-width: 640px), (max-height: 500px)');
+const panel = document.getElementById('panel');
+const panelToggle = document.getElementById('panelToggle');
+function setPanelCollapsed(collapsed) {
+  panel.classList.toggle('collapsed', collapsed);
+  panelToggle.textContent = collapsed ? 'Controls' : 'Hide';
+  panelToggle.setAttribute('aria-expanded', String(!collapsed));
+}
+panelToggle.addEventListener('click', () => setPanelCollapsed(!panel.classList.contains('collapsed')));
+// Start collapsed on small screens so the model is visible straight away.
+setPanelCollapsed(smallScreen.matches);
+
+const isTouch = window.matchMedia('(pointer: coarse)').matches;
+const hintEl = document.getElementById('hint');
+const defaultHint = isTouch
+  ? 'Drag to rotate · pinch to zoom · tap the mouse to read its temperature and add a heat pulse'
+  : hintEl.textContent;
+hintEl.textContent = defaultHint;
+
+/* ---------- region measurement ----------
+   The mesh is rendered offscreen with each vertex's index encoded as a colour,
+   so the pixels inside the drawn circle name exactly the surface points visible
+   there — the same pixels a real thermal camera's region-of-interest covers.
+   Each pixel counts once, so min/avg/max are area-weighted like on a camera. */
+const idMaterial = new THREE.ShaderMaterial({
+  side: THREE.DoubleSide,
+  vertexShader: `
+    attribute float vid;
+    flat varying float vId;
+    void main() {
+      vId = vid;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`,
+  fragmentShader: `
+    flat varying float vId;
+    void main() {
+      float id = vId + 1.0; // 0 is reserved for background
+      gl_FragColor = vec4(mod(id, 256.0), mod(floor(id / 256.0), 256.0), floor(id / 65536.0), 255.0) / 255.0;
+    }`,
+});
+const idScene = new THREE.Scene();
+const idMesh = new THREE.Mesh(merged, idMaterial);
+idScene.add(idMesh);
+
+// Returns Map(vertexIndex -> pixel count) for the visible surface inside a screen circle (CSS px),
+// or null if the offscreen ID render / readback failed on this GPU.
+function visibleVerticesInCircle(cx, cy, r) {
+  const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+  const dpr = size.x / window.innerWidth;
+  const x0 = Math.max(0, Math.floor((cx - r) * dpr)), x1 = Math.min(size.x, Math.ceil((cx + r) * dpr));
+  const yTop = Math.max(0, Math.floor((cy - r) * dpr)), yBot = Math.min(size.y, Math.ceil((cy + r) * dpr));
+  const w = x1 - x0, h = yBot - yTop;
+  const counts = new Map();
+  if (w <= 0 || h <= 0) return counts;
+  const buf = new Uint8Array(w * h * 4);
+  const rt = new THREE.WebGLRenderTarget(size.x, size.y);
+  try {
+    idMesh.rotation.copy(mouseMesh.rotation);
+    renderer.setRenderTarget(rt);
+    renderer.render(idScene, camera);
+    // three.js logs shader errors rather than throwing; an unrunnable program would read back as "empty".
+    if (renderer.properties.get(idMaterial).currentProgram?.diagnostics?.runnable === false) {
+      throw new Error('ID shader failed to compile');
+    }
+    renderer.readRenderTargetPixels(rt, x0, size.y - yBot, w, h, buf); // GL origin is bottom-left
+  } catch (err) {
+    console.error('Region measurement failed:', err);
+    return null;
+  } finally {
+    renderer.setRenderTarget(null);
+    rt.dispose();
+  }
+
+  const ccx = cx * dpr, ccy = cy * dpr, rr = (r * dpr) ** 2;
+  for (let j = 0; j < h; j++) {
+    const py = yBot - j - 0.5; // buffer row j, back in top-left screen coords
+    for (let i = 0; i < w; i++) {
+      const px = x0 + i + 0.5;
+      if ((px - ccx) ** 2 + (py - ccy) ** 2 > rr) continue;
+      const o = (j * w + i) * 4;
+      const id = buf[o] + buf[o + 1] * 256 + buf[o + 2] * 65536 - 1;
+      if (id >= 0) counts.set(id, (counts.get(id) || 0) + 1);
+    }
+  }
+  return counts;
+}
+
+const ROI_COLORS = ['#38bdf8', '#a3e635', '#f472b6'];
+const rois = []; // { name, color, ids, weights, markers, valsEl }
+let roiSerial = 0;
+const roiBox = document.getElementById('roiBox');
+
+function addRoi(cx, cy, r) {
+  const counts = visibleVerticesInCircle(cx, cy, r);
+  if (!counts) return null; // measurement unavailable, as opposed to an empty circle
+  if (!counts.size) return false;
+  if (rois.length >= ROI_COLORS.length) removeRoi(rois[0]);
+  const color = ROI_COLORS.find(c => !rois.some(roi => roi.color === c));
+  const ids = Uint32Array.from(counts.keys());
+  const weights = Uint32Array.from(counts.values());
+
+  // Mark the measured surface with dots that ride along with the model.
+  const pos = merged.attributes.position, nrm = merged.attributes.normal;
+  const pts = new Float32Array(ids.length * 3);
+  ids.forEach((id, k) => {
+    pts[k * 3] = pos.getX(id) + nrm.getX(id) * 0.006;
+    pts[k * 3 + 1] = pos.getY(id) + nrm.getY(id) * 0.006;
+    pts[k * 3 + 2] = pos.getZ(id) + nrm.getZ(id) * 0.006;
+  });
+  const markerGeo = new THREE.BufferGeometry();
+  markerGeo.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+  const markers = new THREE.Points(markerGeo, new THREE.PointsMaterial({ color, size: 4, sizeAttenuation: false }));
+  mouseMesh.add(markers);
+
+  rois.push({ name: 'R' + (++roiSerial), color, ids, weights, markers });
+  renderRoiList();
+  return true;
+}
+function removeRoi(roi) {
+  mouseMesh.remove(roi.markers);
+  roi.markers.geometry.dispose();
+  roi.markers.material.dispose();
+  rois.splice(rois.indexOf(roi), 1);
+  renderRoiList();
+}
+function renderRoiList() {
+  roiBox.replaceChildren(...rois.map(roi => {
+    const row = document.createElement('div');
+    row.className = 'roi-row';
+    const swatch = document.createElement('span');
+    swatch.className = 'roi-swatch';
+    swatch.style.background = roi.color;
+    const name = document.createElement('span');
+    name.className = 'roi-name';
+    name.textContent = roi.name;
+    roi.valsEl = document.createElement('span');
+    roi.valsEl.className = 'roi-vals';
+    const del = document.createElement('button');
+    del.className = 'roi-del';
+    del.textContent = '×';
+    del.setAttribute('aria-label', `Remove ${roi.name}`);
+    del.addEventListener('click', () => removeRoi(roi));
+    row.append(swatch, name, roi.valsEl, del);
+    return row;
+  }));
+  document.body.classList.toggle('has-roi', rois.length > 0);
+  updateRoiReadouts();
+}
+function updateRoiReadouts() {
+  for (const roi of rois) {
+    let min = Infinity, max = -Infinity, sum = 0, n = 0;
+    for (let k = 0; k < roi.ids.length; k++) {
+      const t = currentTemp[roi.ids[k]], w = roi.weights[k];
+      if (t < min) min = t;
+      if (t > max) max = t;
+      sum += t * w; n += w;
+    }
+    roi.valsEl.textContent = `min ${min.toFixed(1)} · avg ${(sum / n).toFixed(1)} · max ${max.toFixed(1)} °C`;
+  }
+}
+
+const btnMeasure = document.getElementById('btnMeasure');
+const roiDraw = document.getElementById('roiDraw');
+let measureMode = false;
+let roiStart = null;
+function setMeasureMode(on) {
+  measureMode = on;
+  controls.enabled = !on; // the drag draws the circle instead of orbiting
+  roiStart = null;
+  roiDraw.style.display = 'none';
+  btnMeasure.classList.toggle('active', on);
+  btnMeasure.textContent = on ? 'Measuring… (cancel)' : 'Measure region';
+  document.body.classList.toggle('measuring', on);
+  hintEl.textContent = on ? 'Drag a circle over the mouse to measure that region' : defaultHint;
+  if (on) {
+    hideTooltip();
+    if (smallScreen.matches) setPanelCollapsed(true);
+  }
+}
+btnMeasure.addEventListener('click', () => setMeasureMode(!measureMode));
+// The vertex-ID shader needs `flat` varyings, which only exist in WebGL2.
+if (!renderer.capabilities.isWebGL2) {
+  btnMeasure.disabled = true;
+  btnMeasure.title = 'Region measurement needs WebGL2, which this browser/GPU doesn’t provide';
+  btnMeasure.setAttribute('aria-label', 'Measure region (unavailable: needs WebGL2)');
+}
+window.addEventListener('keydown', (evt) => { if (evt.key === 'Escape' && measureMode) setMeasureMode(false); });
+function drawRoiCircle(cx, cy, r) {
+  Object.assign(roiDraw.style, {
+    display: 'block', left: (cx - r) + 'px', top: (cy - r) + 'px', width: (2 * r) + 'px', height: (2 * r) + 'px',
+  });
+}
+
+/* ---------- raycasting: hover/tap tooltip + click to add heat ---------- */
 const raycaster = new THREE.Raycaster();
 const pointerNDC = new THREE.Vector2();
 const tooltip = document.getElementById('tooltip');
 let pointerDownPos = null;
+let tooltipTimer = null;
 
 function updatePointerNDC(evt) {
   pointerNDC.x = (evt.clientX / window.innerWidth) * 2 - 1;
   pointerNDC.y = -(evt.clientY / window.innerHeight) * 2 + 1;
 }
-
-renderer.domElement.addEventListener('pointermove', (evt) => {
+function hitTest(evt) {
   updatePointerNDC(evt);
   raycaster.setFromCamera(pointerNDC, camera);
-  const hit = raycaster.intersectObject(mouseMesh)[0];
-  if (hit && hit.face) {
-    const { a, b, c } = hit.face;
-    const t = (currentTemp[a] + currentTemp[b] + currentTemp[c]) / 3;
-    tooltip.style.display = 'block';
-    tooltip.style.left = (evt.clientX + 14) + 'px';
-    tooltip.style.top = (evt.clientY + 14) + 'px';
-    tooltip.textContent = t.toFixed(1) + '°C';
-  } else {
-    tooltip.style.display = 'none';
+  return raycaster.intersectObject(mouseMesh, false)[0];
+}
+function faceTemp(hit) {
+  const { a, b, c } = hit.face;
+  return (currentTemp[a] + currentTemp[b] + currentTemp[c]) / 3;
+}
+function showTooltip(x, y, text) {
+  tooltip.textContent = text;
+  tooltip.style.display = 'block';
+  // keep it on-screen: flip to the other side of the pointer near the right/bottom edges
+  const w = tooltip.offsetWidth, h = tooltip.offsetHeight;
+  const left = x + 14 + w > window.innerWidth ? x - 14 - w : x + 14;
+  const top = y + 14 + h > window.innerHeight ? y - 14 - h : y + 14;
+  tooltip.style.left = Math.max(4, left) + 'px';
+  tooltip.style.top = Math.max(4, top) + 'px';
+}
+function hideTooltip() {
+  tooltip.style.display = 'none';
+}
+
+renderer.domElement.addEventListener('pointermove', (evt) => {
+  if (measureMode) {
+    if (roiStart) drawRoiCircle(roiStart.x, roiStart.y, Math.hypot(evt.clientX - roiStart.x, evt.clientY - roiStart.y));
+    return;
   }
+  if (evt.pointerType !== 'mouse') return; // touch has no hover; temperature shows on tap instead
+  const hit = hitTest(evt);
+  if (hit && hit.face) showTooltip(evt.clientX, evt.clientY, faceTemp(hit).toFixed(1) + '°C');
+  else hideTooltip();
 });
 
 renderer.domElement.addEventListener('pointerdown', (evt) => {
+  if (measureMode) {
+    if (!evt.isPrimary) return;
+    roiStart = { x: evt.clientX, y: evt.clientY };
+    renderer.domElement.setPointerCapture(evt.pointerId);
+    drawRoiCircle(roiStart.x, roiStart.y, 0);
+    return;
+  }
   pointerDownPos = { x: evt.clientX, y: evt.clientY };
+  if (evt.pointerType !== 'mouse') hideTooltip();
+});
+renderer.domElement.addEventListener('pointercancel', () => {
+  pointerDownPos = null;
+  roiStart = null;
+  roiDraw.style.display = 'none';
 });
 renderer.domElement.addEventListener('pointerup', (evt) => {
+  if (measureMode) {
+    if (!roiStart) return;
+    const r = Math.hypot(evt.clientX - roiStart.x, evt.clientY - roiStart.y);
+    const { x, y } = roiStart;
+    roiStart = null;
+    roiDraw.style.display = 'none';
+    if (r < 10) return; // too small to mean anything; stay in measure mode
+    const added = addRoi(x, y, r);
+    if (added) setMeasureMode(false);
+    else if (added === null) hintEl.textContent = 'Region measurement failed on this graphics setup — the rest of the simulator still works';
+    else hintEl.textContent = 'No part of the mouse inside that circle — try again';
+    return;
+  }
   if (!pointerDownPos) return;
   const dx = evt.clientX - pointerDownPos.x, dy = evt.clientY - pointerDownPos.y;
   pointerDownPos = null;
-  if (Math.hypot(dx, dy) > 5) return; // was a drag/orbit, not a click
-  if (!thermalMode) return;
-  updatePointerNDC(evt);
-  raycaster.setFromCamera(pointerNDC, camera);
-  const hit = raycaster.intersectObject(mouseMesh)[0];
-  if (hit) {
-    const local = mouseMesh.worldToLocal(hit.point.clone());
-    addHotspot(local);
+  const tapSlop = evt.pointerType === 'mouse' ? 5 : 12; // fingers wobble more than a mouse
+  if (Math.hypot(dx, dy) > tapSlop) return; // was a drag/orbit, not a click
+  const hit = hitTest(evt);
+  if (!hit) return;
+  if (thermalMode) addHotspot(mouseMesh.worldToLocal(hit.point.clone()));
+  if (evt.pointerType !== 'mouse' && hit.face) {
+    showTooltip(evt.clientX, evt.clientY, faceTemp(hit).toFixed(1) + '°C');
+    clearTimeout(tooltipTimer);
+    tooltipTimer = setTimeout(hideTooltip, 1800);
   }
 });
 
@@ -703,11 +1184,33 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
+function refreshReadouts() {
+  updateBPEstimate();
+  updateStats();
+  updateRoiReadouts();
+}
+refreshReadouts();
+
 const clock = new THREE.Clock();
+const SLOW_TICK = 0.1; // seconds between pulse aging / readout refreshes
+let sinceSlowTick = 0;
 function animate() {
   requestAnimationFrame(animate);
-  const dt = clock.getDelta();
+  const dt = Math.min(clock.getDelta(), 0.1); // don't lurch after a background tab resumes
   if (autoRotate) mouseMesh.rotation.y += dt * 0.5;
+
+  sinceSlowTick += dt;
+  const slowTick = sinceSlowTick >= SLOW_TICK;
+  if (slowTick) {
+    sinceSlowTick = 0;
+    if (hotspots.length) {
+      ageHotspots(nowSeconds());
+      computeTargetTemp();
+    }
+  }
+  if (stepTemps(dt) > 0.002 && thermalMode) syncColorFromTemp();
+  if (slowTick) refreshReadouts();
+
   controls.update();
   renderer.render(scene, camera);
 }
